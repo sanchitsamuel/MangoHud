@@ -74,6 +74,7 @@ struct fps_limit fps_limit_stats;
 VkPhysicalDeviceDriverProperties driverProps = {};
 int32_t deviceID;
 struct benchmark_stats benchmark;
+ImFontAtlas font_atlas_text {};
 
 /* Mapped from VkInstace/VkPhysicalDevice */
 struct instance_data {
@@ -108,6 +109,10 @@ struct device_data {
    struct vk_device_dispatch_table vtable;
    VkPhysicalDevice physical_device;
    VkDevice device;
+   //VkCommandPool transfer_command_pool;
+   //VkCommandBuffer transfer_command_buffer;
+   //queue_data* transfer_queue;
+   //bool font_uploaded;
 
    VkPhysicalDeviceProperties properties;
 
@@ -181,13 +186,12 @@ struct swapchain_data {
 
    std::list<overlay_draw *> draws; /* List of struct overlay_draw */
 
-   ImFont* font = nullptr;
    bool font_uploaded;
-   VkImage font_image;
-   VkImageView font_image_view;
-   VkDeviceMemory font_mem;
-   VkBuffer upload_font_buffer;
-   VkDeviceMemory upload_font_buffer_mem;
+   VkImage font_image[2];
+   VkImageView font_image_view[2];
+   VkDeviceMemory font_mem[2];
+   VkBuffer upload_font_buffer[2];
+   VkDeviceMemory upload_font_buffer_mem[2];
 
    /**/
    ImGuiContext* imgui_context;
@@ -253,36 +257,64 @@ static void unmap_object(uint64_t obj)
 
 /**/
 
-void create_fonts(const overlay_params& params, ImFont*& default_font, ImFont*& small_font)
+#define CHAR_CELSIUS    "\xe2\x84\x83"
+#define CHAR_FAHRENHEIT "\xe2\x84\x89"
+
+void create_fonts(const overlay_params& params, ImFont*& small_font, ImFont*& text_font)
 {
    auto& io = ImGui::GetIO();
    int font_size = params.font_size;
    if (!font_size)
       font_size = 24;
 
-   static const ImWchar glyph_ranges[] =
+   static const ImWchar default_range[] =
    {
       0x0020, 0x00FF, // Basic Latin + Latin Supplement
-      0x0100, 0x017f, // Latin Extended-A
-      0x0400, 0x052F, // Cyrillic + Cyrillic Supplement
-      0x2DE0, 0x2DFF, // Cyrillic Extended-A
-      0xA640, 0xA69F, // Cyrillic Extended-B
+      0x0100, 0x017F, // Latin Extended-A
+      0x2103, 0x2103, // Degree Celsius
+      0x2109, 0x2109, // Degree Fahrenheit
       0,
    };
 
+   ImVector<ImWchar> glyph_ranges;
+   ImFontGlyphRangesBuilder builder;
+   builder.AddRanges(default_range);
+   //builder.AddRanges(io.Fonts->GetGlyphRangesJapanese());
+   builder.AddRanges(io.Fonts->GetGlyphRangesCyrillic());
+   builder.AddRanges(io.Fonts->GetGlyphRangesKorean());
+   //builder.AddRanges(io.Fonts->GetGlyphRangesThai());
+   //builder.AddRanges(io.Fonts->GetGlyphRangesVietnamese());
+   //builder.AddRanges(io.Fonts->GetGlyphRangesChineseFull());
+   //builder.AddRanges(io.Fonts->GetGlyphRangesChineseSimplifiedCommon());
+   builder.BuildRanges(&glyph_ranges);
+
    // ImGui takes ownership of the data, no need to free it
    if (!params.font_file.empty() && file_exists(params.font_file)) {
-      default_font = io.Fonts->AddFontFromFileTTF(params.font_file.c_str(), font_size, nullptr, glyph_ranges);
-      small_font = io.Fonts->AddFontFromFileTTF(params.font_file.c_str(), font_size * 0.55f, nullptr, io.Fonts->GetGlyphRangesDefault());
+      io.Fonts->AddFontFromFileTTF(params.font_file.c_str(), font_size, nullptr, default_range);
+      small_font = io.Fonts->AddFontFromFileTTF(params.font_file.c_str(), font_size * 0.55f, nullptr, default_range);
    } else {
       const char* ttf_compressed_base85 = GetDefaultCompressedFontDataTTFBase85();
-      default_font = io.Fonts->AddFontFromMemoryCompressedBase85TTF(ttf_compressed_base85, font_size, nullptr, io.Fonts->GetGlyphRangesDefault());
-      small_font = io.Fonts->AddFontFromMemoryCompressedBase85TTF(ttf_compressed_base85, font_size * 0.55, nullptr, io.Fonts->GetGlyphRangesDefault());
+      io.Fonts->AddFontFromMemoryCompressedBase85TTF(ttf_compressed_base85, font_size, nullptr, default_range);
+      small_font = io.Fonts->AddFontFromMemoryCompressedBase85TTF(ttf_compressed_base85, font_size * 0.55f, nullptr, default_range);
    }
+
+   std::string text_font_file = params.text_font_file;
+   if (text_font_file.empty())
+      text_font_file = params.font_file;
+
+   if (!text_font_file.empty()) {
+      font_atlas_text.Clear();
+      text_font = font_atlas_text.AddFontFromFileTTF(text_font_file.c_str(), font_size, nullptr, glyph_ranges.Data);
+      font_atlas_text.Build(); // Build the atlas while 'ranges' is still in scope and not deleted.
+   } else {
+      text_font = io.Fonts->Fonts[0];
+   }
+
+   io.Fonts->Build();
 }
 
 // FIXME "temporary" hack until Dear ImGui has an actual API for this
-void scale_default_font(ImFont& scaled_font, float scale)
+static void scale_default_font(ImFont& scaled_font, float scale)
 {
    scaled_font = *ImGui::GetIO().Fonts->Fonts[0];
    scaled_font.Scale = scale;
@@ -1541,8 +1573,8 @@ void render_imgui(swapchain_stats& data, struct overlay_params& params, ImVec2& 
       }
 
 #ifdef HAVE_DBUS
-      ImFont scaled_font;
-      scale_default_font(scaled_font, params.font_scale_media_player);
+      ImFont scaled_font = *data.font_text;
+      scaled_font.Scale = params.font_scale_media_player;
       ImGui::PushFont(&scaled_font);
       auto media_color = ImGui::ColorConvertU32ToFloat4(params.media_player_color);
       render_mpris_metadata(data, media_color, main_metadata, frame_timing, true);
@@ -1564,6 +1596,21 @@ void render_imgui(swapchain_stats& data, struct overlay_params& params, ImVec2& 
          render_benchmark(data, params, window_size, height, now);
 
    }
+
+#if 0
+   ImGui::SetNextWindowBgAlpha(params.background_alpha);
+   auto dsz = ImGui::GetIO().DisplaySize;
+   //auto atlas = &font_atlas_text;
+   auto atlas = ImGui::GetIO().Fonts->Fonts[0]->ContainerAtlas;
+   float scale = atlas->TexHeight/512.f;
+   auto img_pos = ImVec2(dsz.x - atlas->TexWidth/scale - 25.f, dsz.y - 512 - 25.f);
+   auto img_size = ImVec2(atlas->TexWidth/scale + 20.f, 512 + 20.f);
+   ImGui::SetNextWindowPos(img_pos, ImGuiCond_Always);
+   ImGui::SetNextWindowSize(img_size, ImGuiCond_Always);
+   ImGui::Begin("Font Atlas", nullptr, ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoDecoration);
+   ImGui::Image(atlas->TexID, ImVec2(atlas->TexWidth/scale, atlas->TexHeight/scale));
+   ImGui::End();
+#endif
 }
 
 static void compute_swapchain_display(struct swapchain_data *data)
@@ -1596,21 +1643,16 @@ static uint32_t vk_memory_type(struct device_data *data,
     return 0xFFFFFFFF; // Unable to find memoryType
 }
 
-static void ensure_swapchain_fonts(struct swapchain_data *data,
-                                   VkCommandBuffer command_buffer)
+static void upload_image_data(struct device_data *device_data,
+                              VkCommandBuffer command_buffer,
+                              void *pixels,
+                              VkDeviceSize upload_size,
+                              uint32_t width,
+                              uint32_t height,
+                              VkBuffer& upload_buffer,
+                              VkDeviceMemory& upload_buffer_mem,
+                              VkImage image)
 {
-   if (data->font_uploaded)
-      return;
-
-   data->font_uploaded = true;
-
-   struct device_data *device_data = data->device;
-   ImGuiIO& io = ImGui::GetIO();
-   unsigned char* pixels;
-   int width, height;
-   io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
-   size_t upload_size = width * height * 4 * sizeof(char);
-
    /* Upload buffer */
    VkBufferCreateInfo buffer_info = {};
    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1618,10 +1660,10 @@ static void ensure_swapchain_fonts(struct swapchain_data *data,
    buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
    VK_CHECK(device_data->vtable.CreateBuffer(device_data->device, &buffer_info,
-                                             NULL, &data->upload_font_buffer));
+                                             NULL, &upload_buffer));
    VkMemoryRequirements upload_buffer_req;
    device_data->vtable.GetBufferMemoryRequirements(device_data->device,
-                                                   data->upload_font_buffer,
+                                                   upload_buffer,
                                                    &upload_buffer_req);
    VkMemoryAllocateInfo upload_alloc_info = {};
    upload_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -1632,24 +1674,24 @@ static void ensure_swapchain_fonts(struct swapchain_data *data,
    VK_CHECK(device_data->vtable.AllocateMemory(device_data->device,
                                                &upload_alloc_info,
                                                NULL,
-                                               &data->upload_font_buffer_mem));
+                                               &upload_buffer_mem));
    VK_CHECK(device_data->vtable.BindBufferMemory(device_data->device,
-                                                 data->upload_font_buffer,
-                                                 data->upload_font_buffer_mem, 0));
+                                                 upload_buffer,
+                                                 upload_buffer_mem, 0));
 
    /* Upload to Buffer */
    char* map = NULL;
    VK_CHECK(device_data->vtable.MapMemory(device_data->device,
-                                          data->upload_font_buffer_mem,
+                                          upload_buffer_mem,
                                           0, upload_size, 0, (void**)(&map)));
    memcpy(map, pixels, upload_size);
    VkMappedMemoryRange range[1] = {};
    range[0].sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
-   range[0].memory = data->upload_font_buffer_mem;
+   range[0].memory = upload_buffer_mem;
    range[0].size = upload_size;
    VK_CHECK(device_data->vtable.FlushMappedMemoryRanges(device_data->device, 1, range));
    device_data->vtable.UnmapMemory(device_data->device,
-                                   data->upload_font_buffer_mem);
+                                   upload_buffer_mem);
 
    /* Copy buffer to image */
    VkImageMemoryBarrier copy_barrier[1] = {};
@@ -1659,7 +1701,7 @@ static void ensure_swapchain_fonts(struct swapchain_data *data,
    copy_barrier[0].newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
    copy_barrier[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
    copy_barrier[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-   copy_barrier[0].image = data->font_image;
+   copy_barrier[0].image = image;
    copy_barrier[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
    copy_barrier[0].subresourceRange.levelCount = 1;
    copy_barrier[0].subresourceRange.layerCount = 1;
@@ -1676,8 +1718,8 @@ static void ensure_swapchain_fonts(struct swapchain_data *data,
    region.imageExtent.height = height;
    region.imageExtent.depth = 1;
    device_data->vtable.CmdCopyBufferToImage(command_buffer,
-                                            data->upload_font_buffer,
-                                            data->font_image,
+                                            upload_buffer,
+                                            image,
                                             VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                                             1, &region);
 
@@ -1689,7 +1731,7 @@ static void ensure_swapchain_fonts(struct swapchain_data *data,
    use_barrier[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
    use_barrier[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
    use_barrier[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-   use_barrier[0].image = data->font_image;
+   use_barrier[0].image = image;
    use_barrier[0].subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
    use_barrier[0].subresourceRange.levelCount = 1;
    use_barrier[0].subresourceRange.layerCount = 1;
@@ -1700,9 +1742,149 @@ static void ensure_swapchain_fonts(struct swapchain_data *data,
                                           0, NULL,
                                           0, NULL,
                                           1, use_barrier);
+}
 
-   /* Store our identifier */
-   io.Fonts->TexID = (ImTextureID)(intptr_t)data->font_image;
+static ImTextureID create_image_with_desc(struct swapchain_data *data,
+                                          uint32_t width,
+                                          uint32_t height,
+                                          VkFormat format,
+                                          VkImage& image,
+                                          VkDeviceMemory& image_mem,
+                                          VkImageView& image_view)
+{
+   struct device_data *device_data = data->device;
+
+   VkImageCreateInfo image_info = {};
+   image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+   image_info.imageType = VK_IMAGE_TYPE_2D;
+   image_info.format = format;
+   image_info.extent.width = width;
+   image_info.extent.height = height;
+   image_info.extent.depth = 1;
+   image_info.mipLevels = 1;
+   image_info.arrayLayers = 1;
+   image_info.samples = VK_SAMPLE_COUNT_1_BIT;
+   image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+   image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+   image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+   VK_CHECK(device_data->vtable.CreateImage(device_data->device, &image_info,
+                                            NULL, &image));
+   VkMemoryRequirements font_image_req;
+   device_data->vtable.GetImageMemoryRequirements(device_data->device,
+                                                  image, &font_image_req);
+   VkMemoryAllocateInfo image_alloc_info = {};
+   image_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+   image_alloc_info.allocationSize = font_image_req.size;
+   image_alloc_info.memoryTypeIndex = vk_memory_type(device_data,
+                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                                                     font_image_req.memoryTypeBits);
+   VK_CHECK(device_data->vtable.AllocateMemory(device_data->device, &image_alloc_info,
+                                               NULL, &image_mem));
+   VK_CHECK(device_data->vtable.BindImageMemory(device_data->device,
+                                                image,
+                                                image_mem, 0));
+
+   /* Font image view */
+   VkImageViewCreateInfo view_info = {};
+   view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+   view_info.image = image;
+   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+   view_info.format = format;
+   view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+   view_info.subresourceRange.levelCount = 1;
+   view_info.subresourceRange.layerCount = 1;
+   VK_CHECK(device_data->vtable.CreateImageView(device_data->device, &view_info,
+                                                NULL, &image_view));
+
+   VkDescriptorSet descriptor_set;
+
+   VkDescriptorSetAllocateInfo alloc_info = {};
+   alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+   alloc_info.descriptorPool = data->descriptor_pool;
+   alloc_info.descriptorSetCount = 1;
+   alloc_info.pSetLayouts = &data->descriptor_layout;
+   VK_CHECK(device_data->vtable.AllocateDescriptorSets(device_data->device,
+                                                       &alloc_info,
+                                                       &descriptor_set));
+
+   VkDescriptorImageInfo desc_image[1] = {};
+   desc_image[0].sampler = data->font_sampler;
+   desc_image[0].imageView = image_view;
+   desc_image[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+   VkWriteDescriptorSet write_desc[1] = {};
+   write_desc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+   write_desc[0].dstSet = descriptor_set;
+   write_desc[0].descriptorCount = 1;
+   write_desc[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+   write_desc[0].pImageInfo = desc_image;
+   device_data->vtable.UpdateDescriptorSets(device_data->device, 1, write_desc, 0, NULL);
+
+   return (ImTextureID)descriptor_set;
+}
+
+static void update_font_descriptor(struct swapchain_data *data, VkImageView image_view)
+{
+   struct device_data *device_data = data->device;
+   /* Descriptor set */
+   VkDescriptorImageInfo desc_image[1] = {};
+   desc_image[0].sampler = data->font_sampler;
+   desc_image[0].imageView = image_view;
+   desc_image[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+   VkWriteDescriptorSet write_desc[1] = {};
+   write_desc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+   write_desc[0].dstSet = data->descriptor_set;
+   write_desc[0].descriptorCount = 1;
+   write_desc[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+   write_desc[0].pImageInfo = desc_image;
+   device_data->vtable.UpdateDescriptorSets(device_data->device, 1, write_desc, 0, NULL);
+}
+
+static void ensure_swapchain_fonts(struct swapchain_data *data,
+                                   VkCommandBuffer command_buffer)
+{
+   struct device_data *device_data = data->device;
+   if (data->font_uploaded)
+      return;
+
+   data->font_uploaded = true;
+/*
+   device_data->vtable.ResetCommandBuffer(device_data->transfer_command_buffer, 0);
+
+   VkCommandBufferBeginInfo buffer_begin_info = {};
+   buffer_begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+   device_data->vtable.BeginCommandBuffer(device_data->transfer_command_buffer, &buffer_begin_info);
+   VkPipelineStageFlags stages_wait = VK_PIPELINE_STAGE_TRANSFER_BIT;
+   VkSubmitInfo submit_info = {};
+   submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+   submit_info.commandBufferCount = 1;
+   submit_info.pCommandBuffers = &device_data->transfer_command_buffer;
+   submit_info.pWaitDstStageMask = &stages_wait;
+   submit_info.waitSemaphoreCount = 0;
+   submit_info.signalSemaphoreCount = 0;
+   submit_info.pSignalSemaphores = NULL;
+*/
+   ImGuiIO& io = ImGui::GetIO();
+   unsigned char* pixels;
+   int width, height;
+   io.Fonts->GetTexDataAsAlpha8(&pixels, &width, &height);
+   size_t upload_size = width * height * 1 * sizeof(char);
+   upload_image_data(device_data, command_buffer, pixels, upload_size, width, height, data->upload_font_buffer[0], data->upload_font_buffer_mem[0], data->font_image[0]);
+
+   if (!font_atlas_text.Fonts.empty()) {
+      font_atlas_text.GetTexDataAsAlpha8(&pixels, &width, &height);
+      upload_size = width * height * 1 * sizeof(char);
+      upload_image_data(device_data, command_buffer, pixels, upload_size, width, height, data->upload_font_buffer[1], data->upload_font_buffer_mem[1], data->font_image[1]);
+#ifndef NDEBUG
+      std::cerr << "MANGOHUD: text font uploaded" << std::endl;
+#endif
+   }
+/*
+   device_data->vtable.EndCommandBuffer(device_data->transfer_command_buffer);
+   device_data->vtable.QueueSubmit(device_data->transfer_queue->queue, 1, &submit_info, NULL);
+   device_data->vtable.DeviceWaitIdle(device_data->device);
+*/
 }
 
 static void CreateOrResizeBuffer(struct device_data *data,
@@ -1840,9 +2022,9 @@ static struct overlay_draw *render_swapchain_display(struct swapchain_data *data
 
     /* Bind pipeline and descriptor sets */
     device_data->vtable.CmdBindPipeline(draw->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, data->pipeline);
-    VkDescriptorSet desc_set[1] = { data->descriptor_set };
-    device_data->vtable.CmdBindDescriptorSets(draw->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                                              data->pipeline_layout, 0, 1, desc_set, 0, NULL);
+//    VkDescriptorSet desc_set[1] = { data->descriptor_set };
+//    device_data->vtable.CmdBindDescriptorSets(draw->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+//                                              data->pipeline_layout, 0, 1, desc_set, 0, NULL);
 
     /* Bind vertex & index buffers */
     VkBuffer vertex_buffers[1] = { draw->vertex_buffer };
@@ -1898,6 +2080,10 @@ static struct overlay_draw *render_swapchain_display(struct swapchain_data *data
             scissor.extent.width = (uint32_t)(pcmd->ClipRect.z - pcmd->ClipRect.x);
             scissor.extent.height = (uint32_t)(pcmd->ClipRect.w - pcmd->ClipRect.y + 1); // FIXME: Why +1 here?
             device_data->vtable.CmdSetScissor(draw->command_buffer, 0, 1, &scissor);
+
+            VkDescriptorSet desc_set[1] = { (VkDescriptorSet)pcmd->TextureId };
+            device_data->vtable.CmdBindDescriptorSets(draw->command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                                                      data->pipeline_layout, 0, 1, desc_set, 0, NULL);
 
             // Draw
             device_data->vtable.CmdDrawIndexed(draw->command_buffer, pcmd->ElemCount, 1, idx_offset, vtx_offset, 0);
@@ -2030,10 +2216,10 @@ static void setup_swapchain_data_pipeline(struct swapchain_data *data)
    /* Descriptor pool */
    VkDescriptorPoolSize sampler_pool_size = {};
    sampler_pool_size.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-   sampler_pool_size.descriptorCount = 1;
+   sampler_pool_size.descriptorCount = 2;
    VkDescriptorPoolCreateInfo desc_pool_info = {};
    desc_pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-   desc_pool_info.maxSets = 1;
+   desc_pool_info.maxSets = 2;
    desc_pool_info.poolSizeCount = 1;
    desc_pool_info.pPoolSizes = &sampler_pool_size;
    VK_CHECK(device_data->vtable.CreateDescriptorPool(device_data->device,
@@ -2056,6 +2242,7 @@ static void setup_swapchain_data_pipeline(struct swapchain_data *data)
                                                           NULL, &data->descriptor_layout));
 
    /* Descriptor set */
+/*
    VkDescriptorSetAllocateInfo alloc_info = {};
    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
    alloc_info.descriptorPool = data->descriptor_pool;
@@ -2064,6 +2251,7 @@ static void setup_swapchain_data_pipeline(struct swapchain_data *data)
    VK_CHECK(device_data->vtable.AllocateDescriptorSets(device_data->device,
                                                        &alloc_info,
                                                        &data->descriptor_set));
+*/
 
    /* Constants: we are using 'vec2 offset' and 'vec2 scale' instead of a full
     * 3d projection matrix
@@ -2185,68 +2373,30 @@ static void setup_swapchain_data_pipeline(struct swapchain_data *data)
    device_data->vtable.DestroyShaderModule(device_data->device, vert_module, NULL);
    device_data->vtable.DestroyShaderModule(device_data->device, frag_module, NULL);
 
+   create_fonts(device_data->instance->params, data->sw_stats.font1, data->sw_stats.font_text);
+
    ImGuiIO& io = ImGui::GetIO();
-   create_fonts(device_data->instance->params, data->font, data->sw_stats.font1);
    unsigned char* pixels;
    int width, height;
-   io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 
-   /* Font image */
-   VkImageCreateInfo image_info = {};
-   image_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-   image_info.imageType = VK_IMAGE_TYPE_2D;
-   image_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-   image_info.extent.width = width;
-   image_info.extent.height = height;
-   image_info.extent.depth = 1;
-   image_info.mipLevels = 1;
-   image_info.arrayLayers = 1;
-   image_info.samples = VK_SAMPLE_COUNT_1_BIT;
-   image_info.tiling = VK_IMAGE_TILING_OPTIMAL;
-   image_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
-   image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-   image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-   VK_CHECK(device_data->vtable.CreateImage(device_data->device, &image_info,
-                                            NULL, &data->font_image));
-   VkMemoryRequirements font_image_req;
-   device_data->vtable.GetImageMemoryRequirements(device_data->device,
-                                                  data->font_image, &font_image_req);
-   VkMemoryAllocateInfo image_alloc_info = {};
-   image_alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-   image_alloc_info.allocationSize = font_image_req.size;
-   image_alloc_info.memoryTypeIndex = vk_memory_type(device_data,
-                                                     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                                                     font_image_req.memoryTypeBits);
-   VK_CHECK(device_data->vtable.AllocateMemory(device_data->device, &image_alloc_info,
-                                               NULL, &data->font_mem));
-   VK_CHECK(device_data->vtable.BindImageMemory(device_data->device,
-                                                data->font_image,
-                                                data->font_mem, 0));
+   // upload default font to VkImage
+   io.Fonts->GetTexDataAsAlpha8(&pixels, &width, &height);
+   io.Fonts->TexID = create_image_with_desc(data, width, height, VK_FORMAT_R8_UNORM, data->font_image[0], data->font_mem[0], data->font_image_view[0]);
+#ifndef NDEBUG
+   std::cerr << "MANGOHUD: Default font tex size: " << width << "x" << height << "px (" << (width*height*1) << " bytes)" << "\n";
+#endif
 
-   /* Font image view */
-   VkImageViewCreateInfo view_info = {};
-   view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-   view_info.image = data->font_image;
-   view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-   view_info.format = VK_FORMAT_R8G8B8A8_UNORM;
-   view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-   view_info.subresourceRange.levelCount = 1;
-   view_info.subresourceRange.layerCount = 1;
-   VK_CHECK(device_data->vtable.CreateImageView(device_data->device, &view_info,
-                                                NULL, &data->font_image_view));
+   // upload "text" font to VkImage
+   if (!font_atlas_text.Fonts.empty()) {
+      font_atlas_text.GetTexDataAsAlpha8(&pixels, &width, &height);
+      font_atlas_text.TexID = create_image_with_desc(data, width, height, VK_FORMAT_R8_UNORM, data->font_image[1], data->font_mem[1], data->font_image_view[1]);
+#ifndef NDEBUG
+      std::cerr << "MANGOHUD: Text font tex size: " << width << "x" << height << "px (" << (width*height*1) << " bytes)" << "\n";
+#endif
+   }
 
-   /* Descriptor set */
-   VkDescriptorImageInfo desc_image[1] = {};
-   desc_image[0].sampler = data->font_sampler;
-   desc_image[0].imageView = data->font_image_view;
-   desc_image[0].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-   VkWriteDescriptorSet write_desc[1] = {};
-   write_desc[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-   write_desc[0].dstSet = data->descriptor_set;
-   write_desc[0].descriptorCount = 1;
-   write_desc[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-   write_desc[0].pImageInfo = desc_image;
-   device_data->vtable.UpdateDescriptorSets(device_data->device, 1, write_desc, 0, NULL);
+//   if (data->descriptor_set)
+//      update_font_descriptor(data, data->font_image_view[0]);
 }
 
 void imgui_custom_style(struct overlay_params& params){
@@ -2410,13 +2560,16 @@ static void shutdown_swapchain_data(struct swapchain_data *data)
                                                   data->descriptor_layout, NULL);
 
    device_data->vtable.DestroySampler(device_data->device, data->font_sampler, NULL);
-   device_data->vtable.DestroyImageView(device_data->device, data->font_image_view, NULL);
-   device_data->vtable.DestroyImage(device_data->device, data->font_image, NULL);
-   device_data->vtable.FreeMemory(device_data->device, data->font_mem, NULL);
+   for (size_t i = 0; i < 2; i++) {
+      if (!data->font_image_view[i])
+         continue;
+      device_data->vtable.DestroyImageView(device_data->device, data->font_image_view[i], NULL);
+      device_data->vtable.DestroyImage(device_data->device, data->font_image[i], NULL);
+      device_data->vtable.FreeMemory(device_data->device, data->font_mem[i], NULL);
 
-   device_data->vtable.DestroyBuffer(device_data->device, data->upload_font_buffer, NULL);
-   device_data->vtable.FreeMemory(device_data->device, data->upload_font_buffer_mem, NULL);
-
+      device_data->vtable.DestroyBuffer(device_data->device, data->upload_font_buffer[i], NULL);
+      device_data->vtable.FreeMemory(device_data->device, data->upload_font_buffer_mem[i], NULL);
+   }
    ImGui::DestroyContext(data->imgui_context);
 }
 
@@ -2789,7 +2942,32 @@ static VkResult overlay_CreateDevice(
 
    if (!is_blacklisted()) {
       device_map_queues(device_data, pCreateInfo);
+/*
+      device_data->transfer_queue = device_data->graphic_queue;
+      for (auto queue : device_data->queues) {
+         if (queue->flags & VK_QUEUE_TRANSFER_BIT) {
+            device_data->transfer_queue = queue;
+            std::cerr << "MANGOHUD: Found transfer queue\n";
+            break;
+         }
+      }
+      VkCommandPoolCreateInfo cmd_buffer_pool_info = {};
+      cmd_buffer_pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+      cmd_buffer_pool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+      cmd_buffer_pool_info.queueFamilyIndex = device_data->transfer_queue->family_index;
+      VK_CHECK(device_data->vtable.CreateCommandPool(device_data->device,
+                                                   &cmd_buffer_pool_info,
+                                                   NULL, &device_data->transfer_command_pool));
 
+      VkCommandBufferAllocateInfo cmd_buffer_info = {};
+      cmd_buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+      cmd_buffer_info.commandPool = device_data->transfer_command_pool;
+      cmd_buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+      cmd_buffer_info.commandBufferCount = 1;
+      VK_CHECK(device_data->vtable.AllocateCommandBuffers(device_data->device,
+                                                         &cmd_buffer_info,
+                                                         &device_data->transfer_command_buffer));
+*/
       init_gpu_stats(device_data->properties.vendorID, instance_data->params);
       init_system_info();
    }
@@ -2804,6 +2982,13 @@ static void overlay_DestroyDevice(
    struct device_data *device_data = FIND(struct device_data, device);
    if (!is_blacklisted())
       device_unmap_queues(device_data);
+/*
+   if (device_data->transfer_command_pool) {
+      //device_data->vtable.DestroySemaphore(device_data->device, device_data->semaphore, NULL);
+      //device_data->vtable.DestroyFence(device_data->device, device_data->fence, NULL);
+      device_data->vtable.DestroyCommandPool(device_data->device, device_data->transfer_command_pool, NULL);
+   }
+*/
    device_data->vtable.DestroyDevice(device, pAllocator);
    destroy_device_data(device_data);
 }

@@ -71,6 +71,8 @@
 
 #include <glad/glad.h>
 
+#include "overlay.h"
+
 namespace MangoHud {
 
 // Desktop GL 3.2+ has glDrawElementsBaseVertex() which GL ES and WebGL don't have.
@@ -83,7 +85,7 @@ namespace MangoHud {
 // OpenGL Data
 static GLuint       g_GlVersion = 0;                // Extracted at runtime using GL_MAJOR_VERSION, GL_MINOR_VERSION queries.
 static char         g_GlslVersionString[32] = "";   // Specified by user or detected based on compile time GL settings.
-static GLuint       g_FontTexture = 0;
+static GLuint       g_FontTexture[2] {};
 static GLuint       g_ShaderHandle = 0, g_VertHandle = 0, g_FragHandle = 0;
 static int          g_AttribLocationTex = 0, g_AttribLocationProjMtx = 0;                                // Uniforms location
 static int          g_AttribLocationVtxPos = 0, g_AttribLocationVtxUV = 0, g_AttribLocationVtxColor = 0; // Vertex attributes location
@@ -102,8 +104,8 @@ static bool ImGui_ImplOpenGL3_CreateFontsTexture()
     // Upload texture to graphics system
     GLint last_texture;
     glGetIntegerv(GL_TEXTURE_BINDING_2D, &last_texture);
-    glGenTextures(1, &g_FontTexture);
-    glBindTexture(GL_TEXTURE_2D, g_FontTexture);
+    glGenTextures(2, g_FontTexture);
+    glBindTexture(GL_TEXTURE_2D, g_FontTexture[0]);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     //#ifdef GL_UNPACK_ROW_LENGTH
@@ -113,7 +115,22 @@ static bool ImGui_ImplOpenGL3_CreateFontsTexture()
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
     // Store our identifier
-    io.Fonts->TexID = (ImTextureID)(intptr_t)g_FontTexture;
+    io.Fonts->TexID = (ImTextureID)(intptr_t)g_FontTexture[0];
+
+    if (!font_atlas_text.Fonts.empty()) {
+        font_atlas_text.GetTexDataAsRGBA32(&pixels, &width, &height);
+        glBindTexture(GL_TEXTURE_2D, g_FontTexture[1]);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        //#ifdef GL_UNPACK_ROW_LENGTH
+        if (g_IsGLES || g_GlVersion >= 200)
+            glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+        // Store our identifier
+        font_atlas_text.TexID = (ImTextureID)(intptr_t)g_FontTexture[1];
+    }
 
     // Restore state
     glBindTexture(GL_TEXTURE_2D, last_texture);
@@ -123,12 +140,19 @@ static bool ImGui_ImplOpenGL3_CreateFontsTexture()
 
 static void ImGui_ImplOpenGL3_DestroyFontsTexture()
 {
-    if (g_FontTexture)
+    if (g_FontTexture[0])
     {
         ImGuiIO& io = ImGui::GetIO();
-        glDeleteTextures(1, &g_FontTexture);
+        glDeleteTextures(1, &g_FontTexture[0]);
         io.Fonts->TexID = 0;
-        g_FontTexture = 0;
+        g_FontTexture[0] = 0;
+    }
+
+    if (g_FontTexture[1])
+    {
+        glDeleteTextures(1, &g_FontTexture[1]);
+        font_atlas_text.TexID = 0;
+        g_FontTexture[1] = 0;
     }
 }
 

@@ -51,6 +51,7 @@ typedef unsigned long KeySym;
    OVERLAY_PARAM_CUSTOM(fps_sampling_period)         \
    OVERLAY_PARAM_CUSTOM(output_file)                 \
    OVERLAY_PARAM_CUSTOM(font_file)                   \
+   OVERLAY_PARAM_CUSTOM(text_font_file)              \
    OVERLAY_PARAM_CUSTOM(position)                    \
    OVERLAY_PARAM_CUSTOM(width)                       \
    OVERLAY_PARAM_CUSTOM(height)                      \
@@ -135,7 +136,7 @@ struct overlay_params {
    std::vector<KeySym> toggle_hud;
    std::vector<KeySym> toggle_logging;
    std::vector<KeySym> reload_cfg;
-   std::string time_format, output_file, font_file;
+   std::string time_format, output_file, font_file, text_font_file;
    std::string pci_dev;
    std::string media_player_name;
    std::string cpu_text, gpu_text;
