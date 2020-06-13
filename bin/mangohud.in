@@ -18,8 +18,4 @@ fi
 LD_PRELOAD="${LD_PRELOAD}:${MANGOHUD_LIB_NAME}"
 LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:@libdir_mangohud@"
 
-if hash @mangohud_sh@ 2>/dev/null; then
-  exec env MANGOHUD=1 LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD}" @mangohud_sh@ "$@"
-else
-  exec env MANGOHUD=1 LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD}" "$@"
-fi
+exec env MANGOHUD=1 LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD}" "$@"
