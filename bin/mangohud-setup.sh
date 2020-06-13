@@ -36,7 +36,6 @@ mangohud_install() {
     install -vm644 -D ./usr/share/vulkan/implicit_layer.d/MangoHud.x86_64.json /usr/share/vulkan/implicit_layer.d/MangoHud.x86_64.json
     install -vm644 -D ./usr/share/doc/mangohud/MangoHud.conf.example /usr/share/doc/mangohud/MangoHud.conf.example
 
-    install -vm755 ./usr/bin/mangohud.x86 /usr/bin/mangohud.x86
     install -vm755 ./usr/bin/mangohud /usr/bin/mangohud
 
     echo "MangoHud Installed"

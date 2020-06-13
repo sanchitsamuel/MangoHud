@@ -1,7 +1,7 @@
 {
     "file_format_version" : "1.0.0",
     "layer" : {
-      "name": "@PROJECT_NAME@@LAYER_SUFFIX@",
+      "name": "VK_LAYER_@PROJECT_NAME@_overlay@LAYER_SUFFIX@",
       "type": "GLOBAL",
       "api_version": "1.2.135",
       "library_path": "@libdir_mangohud@libMangoHud.so",

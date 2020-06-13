@@ -1,8 +1,8 @@
 #!/bin/sh
 
-MANGOHUD_LIB_NAME="libMangoHud.so"
+MANGOHUD_LIB_NAME="@script_libdir@libMangoHud.so"
 if [ "$MANGOHUD_DLSYM" = "1" ]; then
-	MANGOHUD_LIB_NAME="libMangoHud_dlsym.so:${MANGOHUD_LIB_NAME}"
+	MANGOHUD_LIB_NAME="@script_libdir@libMangoHud_dlsym.so:${MANGOHUD_LIB_NAME}"
 fi
 
 if [ "$#" -eq 0 ]; then
@@ -16,6 +16,5 @@ fi
 # Execute the program under a clean environment
 # pass through the overriden LD_PRELOAD environment variables
 LD_PRELOAD="${LD_PRELOAD}:${MANGOHUD_LIB_NAME}"
-LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:@libdir_mangohud@"
 
-exec env MANGOHUD=1 LD_LIBRARY_PATH="${LD_LIBRARY_PATH}" LD_PRELOAD="${LD_PRELOAD}" "$@"
+exec env MANGOHUD=1 LD_PRELOAD="${LD_PRELOAD}" "$@"

@@ -203,8 +203,10 @@ util_files = files(
 sizeof_ptr = cc.sizeof('void*')
 if sizeof_ptr == 8
   pre_args += '-DMANGOHUD_ARCH="64bit"'
+  arch_bits = 64
 elif sizeof_ptr == 4
   pre_args += '-DMANGOHUD_ARCH="32bit"'
+  arch_bits = 32
 endif
 
 if get_option('use_system_nvml')

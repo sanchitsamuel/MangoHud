@@ -1,4 +1,5 @@
 glslang = find_program('glslangValidator')
+data_conf = configuration_data()
 
 # Needs prefix for configure_file()
 if get_option('append_libdir_mangohud')
@@ -6,6 +7,17 @@ if get_option('append_libdir_mangohud')
 else
   libdir_mangohud = join_paths(get_option('prefix'), get_option('libdir'))
 endif
+
+script_libdir = get_option('with_script_libdir')
+if script_libdir == 'default'
+    data_conf.set('script_libdir', get_option('prefix') + '/\$LIB/')
+else
+    data_conf.set('script_libdir', script_libdir)
+endif
+
+data_conf.set('libdir_mangohud', libdir_mangohud + '/')
+data_conf.set('PROJECT_NAME', meson.project_name().to_upper())
+data_conf.set('LAYER_SUFFIX', arch_bits)
 
 overlay_shaders = [
   'overlay.frag',
@@ -159,25 +171,19 @@ mangohud_dlsym = shared_library(
 )
 
 configure_file(input : 'mangohud.json.in',
-  output : '@0@.@1@.json'.format(meson.project_name(), target_machine.cpu_family()),
-  configuration : {'libdir_mangohud' : libdir_mangohud + '/',
-                  'PROJECT_NAME' : meson.project_name() + ' ',
-                  'LAYER_SUFFIX' : target_machine.cpu_family()},
+  output : '@0@.@1@.json'.format(meson.project_name(), target_machine.cpu_family()), # or arch_bits?
+  configuration : data_conf,
   install : true,
   install_dir : join_paths(get_option('datadir'), 'vulkan', 'implicit_layer.d'),
 )
 
-if target_machine.cpu_family() == 'x86_64'
-  mangohud_cpu_family = ''
-else
-  mangohud_cpu_family = '.@0@'.format(target_machine.cpu_family())
+if get_option('include_bin')
+  configure_file(input : '../bin/mangohud.in',
+    output : 'mangohud',
+    configuration : data_conf,
+    install_dir : get_option('bindir'),
+  )
 endif
-
-configure_file(input : '../bin/mangohud.in',
-  output : 'mangohud@0@'.format(mangohud_cpu_family),
-  configuration : {'libdir_mangohud' : libdir_mangohud},
-  install_dir : get_option('bindir'),
-)
 
 if get_option('include_doc')
   install_data(
