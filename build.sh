@@ -188,6 +188,7 @@ install() {
     [ "$UID" -eq 0 ] || mkdir -pv "${CONFIG_DIR}"
     [ "$UID" -eq 0 ] || exec $SU_CMD bash "$0" install
 
+    ln -s lib64 /usr/lib/mangohud/lib
     /usr/bin/install -vm644 -D ./build/release/usr/lib/mangohud/lib32/libMangoHud.so /usr/lib/mangohud/lib32/libMangoHud.so
     /usr/bin/install -vm644 -D ./build/release/usr/lib/mangohud/lib64/libMangoHud.so /usr/lib/mangohud/lib64/libMangoHud.so
     /usr/bin/install -vm644 -D ./build/release/usr/lib/mangohud/lib32/libMangoHud_dlsym.so /usr/lib/mangohud/lib32/libMangoHud_dlsym.so
