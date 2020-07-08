@@ -1,11 +1,10 @@
 glslang = find_program('glslangValidator')
 
 # Needs prefix for configure_file()
-if get_option('append_libdir_mangohud')
-  libdir_mangohud = join_paths(get_option('libdir'), 'mangohud')
-  ld_libdir_mangohud = get_option('prefix') + '/\$LIB/mangohud/'
+if get_option('ld_libdir_prefix')
+  # FIXME derive from libdir
+  ld_libdir_mangohud = get_option('prefix') + '/lib/mangohud/\$LIB/'
 else
-  libdir_mangohud = get_option('libdir')
   ld_libdir_mangohud = get_option('prefix') + '/\$LIB/'
 endif
 
@@ -138,7 +137,6 @@ vklayer_mesa_overlay = shared_library(
     dep_vulkan],
   include_directories : [inc_common],
   link_args : link_args,
-  install_dir : libdir_mangohud,
   install : true
 )
 
@@ -160,14 +158,13 @@ mangohud_dlsym = shared_library(
   dependencies : [dep_dl],
   include_directories : [inc_common],
   link_args : link_args,
-  install_dir : libdir_mangohud,
   install : true
 )
 
 configure_file(input : 'mangohud.json.in',
   output : '@0@.json'.format(meson.project_name()),
   configuration : {'ld_libdir_mangohud' : ld_libdir_mangohud,
-                  'PROJECT_NAME' : meson.project_name()},
+                  'PROJECT_NAME' : meson.project_name().to_upper()},
   install : true,
   install_dir : join_paths(get_option('datadir'), 'vulkan', 'implicit_layer.d'),
 )
