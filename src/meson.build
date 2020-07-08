@@ -1,11 +1,17 @@
 glslang = find_program('glslangValidator')
 
 # Needs prefix for configure_file()
+if get_option('append_libdir_mangohud')
+  libdir_mangohud = join_paths(get_option('libdir'), 'mangohud')
+  ld_libdir_mangohud = get_option('prefix') + '/\$LIB/mangohud/'
+else
+  libdir_mangohud = get_option('libdir')
+  ld_libdir_mangohud = get_option('prefix') + '/\$LIB/'
+endif
+
 if get_option('ld_libdir_prefix')
   # FIXME derive from libdir
   ld_libdir_mangohud = get_option('prefix') + '/lib/mangohud/\$LIB/'
-else
-  ld_libdir_mangohud = get_option('prefix') + '/\$LIB/'
 endif
 
 overlay_shaders = [
@@ -137,6 +143,7 @@ vklayer_mesa_overlay = shared_library(
     dep_vulkan],
   include_directories : [inc_common],
   link_args : link_args,
+  install_dir : libdir_mangohud,
   install : true
 )
 
@@ -158,6 +165,7 @@ mangohud_dlsym = shared_library(
   dependencies : [dep_dl],
   include_directories : [inc_common],
   link_args : link_args,
+  install_dir : libdir_mangohud,
   install : true
 )
 
