@@ -720,7 +720,7 @@ void init_system_info(){
          }
       }
       else {
-           wineProcess = "";
+           wineVersion = "";
       }
 //driver = itox(device_data->properties.driverVersion);
       //driver = itox(device_data->properties.driverVersion);
